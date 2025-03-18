@@ -1,0 +1,62 @@
+@startuml Flujo de Datos en el Sistema de Detección de Fraude
+
+skinparam backgroundColor white
+skinparam handwritten false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 14
+skinparam arrowColor #333333
+skinparam activityBorderColor #333333
+skinparam activityBackgroundColor #EEEEEE
+skinparam activityDiamondBorderColor #333333
+skinparam activityDiamondBackgroundColor #EEEEEE
+skinparam noteBorderColor #333333
+skinparam noteBackgroundColor #FFFFCC
+
+title Flujo de Datos en el Sistema de Detección de Fraude Financiero
+
+|#AntiqueWhite|Fuentes de Datos|
+start
+:Datos de Kaggle (IEEE-CIS Fraud Detection);
+:Transacciones en tiempo real;
+|#LightBlue|Ingesta|
+:Descarga automática desde Kaggle;
+:Streaming de transacciones con Kinesis;
+|#LightYellow|Raw Zone|
+:Almacenamiento en S3 (Raw);
+:Catalogación con Glue Crawler;
+|#LightGreen|Procesamiento|
+:Validación de calidad de datos;
+:Limpieza y normalización;
+:Transformación a modelo estrella;
+if (¿Datos válidos?) then (sí)
+  |#LightGreen|Processed Zone|
+  :Almacenamiento en S3 (Processed);
+  :Enriquecimiento con datos históricos;
+  |#LightCoral|Detección de Fraude|
+  :Aplicación de reglas de negocio;
+  :Ejecución de modelos ML;
+  if (¿Posible fraude?) then (sí)
+    :Generación de alerta;
+    :Actualización de estadísticas en DynamoDB;
+    :Notificación vía SNS;
+  else (no)
+    :Registro de transacción normal;
+  endif
+  |#LightBlue|Analytics Zone|
+  :Creación de agregaciones;
+  :Almacenamiento en S3 (Analytics);
+  :Carga en Redshift (prod);
+  :Consultas con Athena;
+  :Visualización con QuickSight;
+else (no)
+  :Registro de error;
+  :Notificación al equipo de datos;
+  :Almacenamiento en bucket de errores;
+endif
+|#Pink|Monitoreo|
+:Registro de métricas en CloudWatch;
+:Monitoreo de rendimiento;
+:Alertas de errores;
+stop
+
+@enduml 

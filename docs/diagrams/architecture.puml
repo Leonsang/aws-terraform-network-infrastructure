@@ -1,0 +1,88 @@
+@startuml Arquitectura del Sistema de Detección de Fraude
+
+!define AWSPuml https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/v16.0/dist
+!include AWSPuml/AWSCommon.puml
+!include AWSPuml/Storage/SimpleStorageService.puml
+!include AWSPuml/Analytics/Glue.puml
+!include AWSPuml/Analytics/Redshift.puml
+!include AWSPuml/Analytics/Athena.puml
+!include AWSPuml/Analytics/Kinesis.puml
+!include AWSPuml/Compute/Lambda.puml
+!include AWSPuml/Database/DynamoDB.puml
+!include AWSPuml/ApplicationIntegration/SimpleNotificationService.puml
+!include AWSPuml/ManagementGovernance/CloudWatch.puml
+!include AWSPuml/Analytics/QuickSight.puml
+
+skinparam linetype ortho
+skinparam rectangle {
+    BackgroundColor<<Raw>> LightYellow
+    BackgroundColor<<Processed>> LightGreen
+    BackgroundColor<<Analytics>> LightBlue
+    BorderColor Black
+    ArrowColor Black
+}
+
+' Título
+title Arquitectura Lakehouse para Detección de Fraude Financiero
+
+' Definir zonas
+rectangle "Raw Zone (Bronze) 🥉" as RawZone <<Raw>> {
+    SimpleStorageService(rawBucket, "Raw Bucket", "Datos sin procesar")
+    Glue(rawCrawler, "Glue Crawler", "Catalogación")
+}
+
+rectangle "Processed Zone (Silver) 🥈" as ProcessedZone <<Processed>> {
+    SimpleStorageService(processedBucket, "Processed Bucket", "Datos limpios")
+    Glue(etlJob, "Glue ETL Job", "Transformación")
+    Lambda(qualityCheck, "Lambda Quality", "Validación de calidad")
+}
+
+rectangle "Analytics Zone (Gold) 🥇" as AnalyticsZone <<Analytics>> {
+    SimpleStorageService(analyticsBucket, "Analytics Bucket", "Vistas materializadas")
+    Redshift(redshift, "Redshift Cluster", "Data Warehouse")
+    Athena(athena, "Athena", "Consultas ad-hoc")
+    QuickSight(quicksight, "QuickSight", "Dashboards")
+}
+
+' Ingesta de datos
+rectangle "Ingesta de Datos" {
+    Lambda(kaggleDownloader, "Kaggle Downloader", "Descarga automática")
+    Kinesis(kinesisStream, "Kinesis Stream", "Ingesta en tiempo real")
+    Lambda(realtimeProcessor, "Realtime Processor", "Procesamiento en tiempo real")
+}
+
+' Monitoreo
+rectangle "Monitoreo y Alertas" {
+    CloudWatch(cloudwatch, "CloudWatch", "Métricas y logs")
+    SimpleNotificationService(sns, "SNS", "Notificaciones")
+}
+
+' Almacenamiento de estadísticas
+DynamoDB(dynamodb, "DynamoDB", "Estadísticas de tarjetas")
+
+' Flujo de datos - Batch
+kaggleDownloader --> rawBucket : "Carga inicial"
+rawBucket --> rawCrawler : "Catalogación"
+rawCrawler --> etlJob : "Metadatos"
+rawBucket --> etlJob : "Lectura"
+etlJob --> qualityCheck : "Validación"
+qualityCheck --> processedBucket : "Datos validados"
+processedBucket --> analyticsBucket : "Agregaciones"
+analyticsBucket --> redshift : "Carga"
+analyticsBucket --> athena : "Consulta"
+redshift --> quicksight : "Visualización"
+athena --> quicksight : "Visualización"
+
+' Flujo de datos - Tiempo real
+kinesisStream --> realtimeProcessor : "Eventos"
+realtimeProcessor --> dynamodb : "Actualización"
+realtimeProcessor --> processedBucket : "Almacenamiento"
+realtimeProcessor --> sns : "Alertas de fraude"
+
+' Monitoreo
+etlJob ..> cloudwatch : "Logs y métricas"
+qualityCheck ..> cloudwatch : "Logs y métricas"
+realtimeProcessor ..> cloudwatch : "Logs y métricas"
+cloudwatch --> sns : "Alertas"
+
+@enduml 
