@@ -1,0 +1,226 @@
+# Ingeniería de Características - Detección de Fraude
+# Este notebook está optimizado para AWS Glue y sigue las mejores prácticas de ingeniería de datos
+
+## 1. Configuración del Entorno
+```python
+# Importar librerías necesarias
+import sys
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from sklearn.decomposition import PCA
+from scipy import stats
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, udf, hour, dayofmonth, month
+from pyspark.sql.types import DoubleType, IntegerType
+import logging
+from datetime import datetime
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Configurar el estilo de visualización
+plt.style.use('seaborn')
+sns.set_palette('husl')
+
+# Configurar Spark
+spark = SparkSession.builder \
+    .appName("FraudDetectionFeatureEngineering") \
+    .config("spark.sql.parquet.compression.codec", "snappy") \
+    .config("spark.sql.parquet.mergeSchema", "true") \
+    .getOrCreate()
+```
+
+## 2. Carga de Datos
+```python
+# Definir rutas de datos
+S3_BUCKET = "s3://your-bucket-name"
+RAW_DATA_PATH = f"{S3_BUCKET}/raw/creditcard.csv"
+PROCESSED_DATA_PATH = f"{S3_BUCKET}/processed"
+
+# Cargar datos usando Spark
+try:
+    df = spark.read.csv(RAW_DATA_PATH, header=True, inferSchema=True)
+    logger.info(f"Datos cargados exitosamente: {df.count()} filas")
+except Exception as e:
+    logger.error(f"Error al cargar datos: {str(e)}")
+    raise
+
+# Registrar métricas iniciales
+logger.info(f"Columnas en el dataset: {len(df.columns)}")
+logger.info(f"Tipos de datos: {df.dtypes}")
+```
+
+## 3. Análisis de Calidad de Datos
+```python
+# Función para analizar calidad de datos
+def analyze_data_quality(df):
+    quality_metrics = {
+        "total_rows": df.count(),
+        "null_counts": df.select([col(c).isNull().cast("int").alias(c) for c in df.columns]).sum().collect()[0],
+        "unique_counts": df.select([col(c).distinct().count().alias(c) for c in df.columns]).collect()[0]
+    }
+    
+    # Registrar métricas
+    logger.info("Métricas de calidad de datos:")
+    for metric, value in quality_metrics.items():
+        logger.info(f"{metric}: {value}")
+    
+    return quality_metrics
+
+# Ejecutar análisis de calidad
+quality_metrics = analyze_data_quality(df)
+```
+
+## 4. Creación de Características
+```python
+# Definir UDFs para transformaciones
+@udf(returnType=DoubleType())
+def calculate_amount_features(amount):
+    return np.log1p(float(amount))
+
+@udf(returnType=DoubleType())
+def calculate_v_features(v_values):
+    return float(np.mean(v_values))
+
+# Crear características temporales
+df = df.withColumn("hour", hour(col("Time"))) \
+       .withColumn("day", dayofmonth(col("Time"))) \
+       .withColumn("month", month(col("Time")))
+
+# Crear características de monto
+df = df.withColumn("amount_log", calculate_amount_features(col("Amount"))) \
+       .withColumn("amount_squared", col("Amount") * col("Amount")) \
+       .withColumn("amount_cubed", col("Amount") * col("Amount") * col("Amount"))
+
+# Crear características de V1-V28
+v_columns = [f"V{i}" for i in range(1, 29)]
+df = df.withColumn("mean_v", calculate_v_features(array(*[col(v) for v in v_columns])))
+```
+
+## 5. Análisis de Correlaciones
+```python
+# Convertir a pandas para análisis de correlaciones
+pandas_df = df.toPandas()
+correlation_matrix = pandas_df.corr()
+
+# Visualizar correlaciones
+plt.figure(figsize=(15, 12))
+sns.heatmap(correlation_matrix, cmap='coolwarm', center=0)
+plt.title('Matriz de Correlación de Características')
+plt.tight_layout()
+plt.savefig('correlation_matrix.png')
+plt.close()
+
+# Identificar características altamente correlacionadas
+threshold = 0.9
+high_corr = np.where(np.abs(correlation_matrix) > threshold)
+high_corr = [(correlation_matrix.index[x], correlation_matrix.columns[y], correlation_matrix.iloc[x, y])
+             for x, y in zip(*high_corr) if x != y and x < y]
+
+logger.info("Características altamente correlacionadas:")
+for feat1, feat2, corr in high_corr:
+    logger.info(f"{feat1} - {feat2}: {corr:.3f}")
+```
+
+## 6. Reducción de Dimensionalidad
+```python
+# Aplicar PCA usando Spark ML
+from pyspark.ml.feature import PCA
+from pyspark.ml.feature import VectorAssembler
+
+# Preparar características para PCA
+feature_cols = [col for col in df.columns if col not in ['Time', 'Amount', 'Class']]
+assembler = VectorAssembler(inputCols=feature_cols, outputCol="features")
+df_assembled = assembler.transform(df)
+
+# Aplicar PCA
+pca = PCA(k=10, inputCol="features", outputCol="pca_features")
+pca_model = pca.fit(df_assembled)
+df_pca = pca_model.transform(df_assembled)
+
+# Guardar modelo PCA
+pca_model.write().overwrite().save(f"{S3_BUCKET}/models/pca_model")
+```
+
+## 7. Escalado de Características
+```python
+# Implementar escalado usando Spark ML
+from pyspark.ml.feature import StandardScaler
+
+# Escalar características
+scaler = StandardScaler(inputCol="features", outputCol="scaled_features")
+scaler_model = scaler.fit(df_assembled)
+df_scaled = scaler_model.transform(df_assembled)
+
+# Guardar modelo de escalado
+scaler_model.write().overwrite().save(f"{S3_BUCKET}/models/scaler_model")
+```
+
+## 8. Selección de Características
+```python
+# Implementar selección de características usando Spark ML
+from pyspark.ml.feature import ChiSqSelector
+
+# Seleccionar características más importantes
+selector = ChiSqSelector(numTopFeatures=20, featuresCol="scaled_features", 
+                        outputCol="selected_features", labelCol="Class")
+selector_model = selector.fit(df_scaled)
+df_selected = selector_model.transform(df_scaled)
+
+# Guardar modelo de selección
+selector_model.write().overwrite().save(f"{S3_BUCKET}/models/feature_selector_model")
+```
+
+## 9. Guardar Datos Procesados
+```python
+# Guardar datos procesados en diferentes formatos
+try:
+    # Guardar en formato Parquet (optimizado para Spark)
+    df_selected.write \
+        .mode("overwrite") \
+        .parquet(f"{PROCESSED_DATA_PATH}/processed_features.parquet")
+    
+    # Guardar en formato CSV (para compatibilidad)
+    df_selected.write \
+        .mode("overwrite") \
+        .csv(f"{PROCESSED_DATA_PATH}/processed_features.csv", header=True)
+    
+    logger.info("Datos procesados guardados exitosamente")
+except Exception as e:
+    logger.error(f"Error al guardar datos procesados: {str(e)}")
+    raise
+```
+
+## 10. Resumen y Métricas
+```python
+# Generar resumen de procesamiento
+processing_summary = {
+    "timestamp": datetime.now().isoformat(),
+    "total_rows": df.count(),
+    "features_original": len(df.columns),
+    "features_selected": len(selector_model.selectedFeatures),
+    "pca_components": pca_model.k,
+    "correlation_threshold": threshold,
+    "high_correlation_pairs": len(high_corr)
+}
+
+# Guardar resumen
+import json
+with open('processing_summary.json', 'w') as f:
+    json.dump(processing_summary, f, indent=4)
+
+# Registrar métricas finales
+logger.info("Resumen de procesamiento:")
+for key, value in processing_summary.items():
+    logger.info(f"{key}: {value}")
+
+# Cerrar sesión de Spark
+spark.stop()
+``` 

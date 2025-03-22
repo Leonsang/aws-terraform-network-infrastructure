@@ -1,0 +1,20 @@
+{
+    "training": {
+        "instance_type": "ml.m5.xlarge",
+        "instance_count": 1,
+        "hyperparameters": {
+            "n_estimators": "100",
+            "learning_rate": "0.1",
+            "max_depth": "7",
+            "num_leaves": "31"
+        }
+    },
+    "endpoint": {
+        "instance_type": "ml.t2.medium",
+        "instance_count": 1
+    },
+    "monitoring": {
+        "error_threshold": 10,
+        "latency_threshold": 1000
+    }
+} 

@@ -12,12 +12,15 @@
 !include AWSPuml/ApplicationIntegration/SimpleNotificationService.puml
 !include AWSPuml/ManagementGovernance/CloudWatch.puml
 !include AWSPuml/Analytics/QuickSight.puml
+!include AWSPuml/Security/KeyManagementService.puml
+!include AWSPuml/Security/IdentityandAccessManagement.puml
 
 skinparam linetype ortho
 skinparam rectangle {
     BackgroundColor<<Raw>> LightYellow
     BackgroundColor<<Processed>> LightGreen
     BackgroundColor<<Analytics>> LightBlue
+    BackgroundColor<<Security>> LightPink
     BorderColor Black
     ArrowColor Black
 }
@@ -25,16 +28,32 @@ skinparam rectangle {
 ' Título
 title Arquitectura Lakehouse para Detección de Fraude Financiero
 
+' Seguridad
+rectangle "Seguridad" as SecurityZone <<Security>> {
+    KeyManagementService(kms, "KMS", "Encriptación")
+    IdentityandAccessManagement(iam, "IAM", "Control de acceso")
+}
+
 ' Definir zonas
 rectangle "Raw Zone (Bronze) 🥉" as RawZone <<Raw>> {
     SimpleStorageService(rawBucket, "Raw Bucket", "Datos sin procesar")
     Glue(rawCrawler, "Glue Crawler", "Catalogación")
+    note right of rawBucket
+        Formato: CSV
+        Particionamiento: Fecha
+        Retención: 30 días
+    end note
 }
 
 rectangle "Processed Zone (Silver) 🥈" as ProcessedZone <<Processed>> {
     SimpleStorageService(processedBucket, "Processed Bucket", "Datos limpios")
     Glue(etlJob, "Glue ETL Job", "Transformación")
     Lambda(qualityCheck, "Lambda Quality", "Validación de calidad")
+    note right of processedBucket
+        Formato: Parquet
+        Compresión: Snappy
+        Particionamiento: Fecha, Tipo
+    end note
 }
 
 rectangle "Analytics Zone (Gold) 🥇" as AnalyticsZone <<Analytics>> {
@@ -42,6 +61,11 @@ rectangle "Analytics Zone (Gold) 🥇" as AnalyticsZone <<Analytics>> {
     Redshift(redshift, "Redshift Cluster", "Data Warehouse")
     Athena(athena, "Athena", "Consultas ad-hoc")
     QuickSight(quicksight, "QuickSight", "Dashboards")
+    note right of analyticsBucket
+        Formato: Parquet
+        Vistas: Materializadas
+        Retención: 1 año
+    end note
 }
 
 ' Ingesta de datos
@@ -49,16 +73,31 @@ rectangle "Ingesta de Datos" {
     Lambda(kaggleDownloader, "Kaggle Downloader", "Descarga automática")
     Kinesis(kinesisStream, "Kinesis Stream", "Ingesta en tiempo real")
     Lambda(realtimeProcessor, "Realtime Processor", "Procesamiento en tiempo real")
+    note right of kinesisStream
+        Shards: 2
+        Retención: 24h
+        TTL: 7 días
+    end note
 }
 
 ' Monitoreo
 rectangle "Monitoreo y Alertas" {
     CloudWatch(cloudwatch, "CloudWatch", "Métricas y logs")
     SimpleNotificationService(sns, "SNS", "Notificaciones")
+    note right of cloudwatch
+        Métricas: Personalizadas
+        Logs: Estructurados
+        Alertas: SNS
+    end note
 }
 
 ' Almacenamiento de estadísticas
 DynamoDB(dynamodb, "DynamoDB", "Estadísticas de tarjetas")
+note right of dynamodb
+    TTL: 30 días
+    Índices: GSI
+    Capacidad: On-demand
+end note
 
 ' Flujo de datos - Batch
 kaggleDownloader --> rawBucket : "Carga inicial"
@@ -78,6 +117,14 @@ kinesisStream --> realtimeProcessor : "Eventos"
 realtimeProcessor --> dynamodb : "Actualización"
 realtimeProcessor --> processedBucket : "Almacenamiento"
 realtimeProcessor --> sns : "Alertas de fraude"
+
+' Seguridad
+kms --> rawBucket : "Encriptación"
+kms --> processedBucket : "Encriptación"
+kms --> analyticsBucket : "Encriptación"
+iam --> kaggleDownloader : "Permisos"
+iam --> etlJob : "Permisos"
+iam --> realtimeProcessor : "Permisos"
 
 ' Monitoreo
 etlJob ..> cloudwatch : "Logs y métricas"

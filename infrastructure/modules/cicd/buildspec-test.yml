@@ -1,0 +1,39 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.9
+    commands:
+      - pip install -r requirements.txt
+      - pip install pytest pytest-cov
+
+  pre_build:
+    commands:
+      - echo "Iniciando pruebas unitarias y de integración"
+      - export PYTHONPATH=$PYTHONPATH:$(pwd)
+
+  build:
+    commands:
+      - pytest tests/ --cov=src/ --cov-report=xml --junitxml=test-reports/junit.xml
+
+  post_build:
+    commands:
+      - echo "Pruebas completadas"
+      - echo "Cobertura de código generada"
+
+reports:
+  coverage-report:
+    files:
+      - 'coverage.xml'
+    file-format: 'COBERTURAXML'
+  test-report:
+    files:
+      - 'test-reports/junit.xml'
+    file-format: 'JUNITXML'
+
+artifacts:
+  files:
+    - coverage.xml
+    - test-reports/junit.xml
+  name: test-reports 

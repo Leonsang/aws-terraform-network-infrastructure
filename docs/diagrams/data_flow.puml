@@ -16,47 +16,195 @@ title Flujo de Datos en el Sistema de Detección de Fraude Financiero
 
 |#AntiqueWhite|Fuentes de Datos|
 start
-:Datos de Kaggle (IEEE-CIS Fraud Detection);
+:IEEE-CIS Fraud Detection Dataset;
+note right
+    - 590,540 transacciones
+    - 394 características
+    - 3.5% fraude
+end note
 :Transacciones en tiempo real;
+note right
+    - 1000 TPS
+    - Latencia < 100ms
+    - 99.9% disponibilidad
+end note
+
 |#LightBlue|Ingesta|
 :Descarga automática desde Kaggle;
+note right
+    - Frecuencia: Diaria
+    - Formato: CSV
+    - Validación: Checksum
+end note
 :Streaming de transacciones con Kinesis;
+note right
+    - Shards: 2
+    - Retención: 24h
+    - TTL: 7 días
+end note
+
 |#LightYellow|Raw Zone|
 :Almacenamiento en S3 (Raw);
+note right
+    - Formato: CSV
+    - Particionamiento: Fecha
+    - Retención: 30 días
+end note
 :Catalogación con Glue Crawler;
+note right
+    - Frecuencia: Cada 6h
+    - Actualización: Incremental
+    - Validación: Schema
+end note
+
 |#LightGreen|Procesamiento|
 :Validación de calidad de datos;
+note right
+    - Completitud
+    - Consistencia
+    - Validez
+end note
 :Limpieza y normalización;
+note right
+    - Valores nulos
+    - Outliers
+    - Escalado
+end note
 :Transformación a modelo estrella;
+note right
+    - Dimensiones
+    - Hechos
+    - Agregaciones
+end note
+
 if (¿Datos válidos?) then (sí)
   |#LightGreen|Processed Zone|
   :Almacenamiento en S3 (Processed);
+  note right
+      - Formato: Parquet
+      - Compresión: Snappy
+      - Particionamiento: Fecha, Tipo
+  end note
   :Enriquecimiento con datos históricos;
+  note right
+      - Features
+      - Estadísticas
+      - Tendencias
+  end note
+
   |#LightCoral|Detección de Fraude|
   :Aplicación de reglas de negocio;
+  note right
+      - Límites
+      - Patrones
+      - Anomalías
+  end note
   :Ejecución de modelos ML;
+  note right
+      - Random Forest
+      - XGBoost
+      - Ensemble
+  end note
+
   if (¿Posible fraude?) then (sí)
     :Generación de alerta;
+    note right
+        - Severidad
+        - Urgencia
+        - Acciones
+    end note
     :Actualización de estadísticas en DynamoDB;
+    note right
+        - TTL: 30 días
+        - Índices: GSI
+        - Capacidad: On-demand
+    end note
     :Notificación vía SNS;
+    note right
+        - Email
+        - SMS
+        - Slack
+    end note
   else (no)
     :Registro de transacción normal;
+    note right
+        - Logs
+        - Métricas
+        - Auditoría
+    end note
   endif
+
   |#LightBlue|Analytics Zone|
   :Creación de agregaciones;
+  note right
+      - Diarias
+      - Semanales
+      - Mensuales
+  end note
   :Almacenamiento en S3 (Analytics);
+  note right
+      - Formato: Parquet
+      - Vistas: Materializadas
+      - Retención: 1 año
+  end note
   :Carga en Redshift (prod);
+  note right
+      - Cluster: RA3
+      - Nodos: 2
+      - Concurrencia: 50
+  end note
   :Consultas con Athena;
+  note right
+      - SQL
+      - BI
+      - API
+  end note
   :Visualización con QuickSight;
+  note right
+      - Dashboards
+      - Reportes
+      - Alertas
+  end note
 else (no)
   :Registro de error;
+  note right
+      - Código
+      - Mensaje
+      - Stack trace
+  end note
   :Notificación al equipo de datos;
+  note right
+      - Email
+      - Slack
+      - Jira
+  end note
   :Almacenamiento en bucket de errores;
+  note right
+      - Formato: JSON
+      - Retención: 7 días
+      - Análisis: Manual
+  end note
 endif
+
 |#Pink|Monitoreo|
 :Registro de métricas en CloudWatch;
+note right
+    - Métricas: Personalizadas
+    - Logs: Estructurados
+    - Alertas: SNS
+end note
 :Monitoreo de rendimiento;
+note right
+    - Latencia
+    - Throughput
+    - Errores
+end note
 :Alertas de errores;
+note right
+    - Umbrales
+    - Acciones
+    - Escalamiento
+end note
 stop
 
 @enduml 

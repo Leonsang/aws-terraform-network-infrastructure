@@ -1,0 +1,31 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:*",
+                "dynamodb:*",
+                "cloudwatch:*",
+                "logs:*",
+                "ec2:*",
+                "iam:*",
+                "firehose:*",
+                "xray:*",
+                "config:*",
+                "securityhub:*",
+                "guardduty:*",
+                "auditmanager:*",
+                "events:*",
+                "apigateway:*",
+                "wafv2:*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "s3:*",
+            "Resource": "arn:aws:s3:::terraform-state-*"
+        }
+    ]
+} 

@@ -1,0 +1,362 @@
+{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "# Análisis de Texto en AWS - Detección de Fraude\n",
+        "\n",
+        "Este notebook implementa el análisis de texto utilizando servicios de AWS como Comprehend y las mejores prácticas de procesamiento distribuido."
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 1. Configuración del Entorno AWS"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "import boto3\n",
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "from datetime import datetime\n",
+        "import json\n",
+        "import logging\n",
+        "from botocore.exceptions import ClientError\n",
+        "\n",
+        "# Configurar logging\n",
+        "logging.basicConfig(level=logging.INFO)\n",
+        "logger = logging.getLogger(__name__)\n",
+        "\n",
+        "# Inicializar clientes de AWS\n",
+        "comprehend = boto3.client('comprehend')\n",
+        "s3 = boto3.client('s3')\n",
+        "glue = boto3.client('glue')"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 2. Configuración de Parámetros"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "# Configurar parámetros\n",
+        "BUCKET = 'tu-bucket-s3'\n",
+        "PREFIX = 'fraud-detection'\n",
+        "DATABASE = 'fraud_detection_db'\n",
+        "TABLE = 'transaction_descriptions'\n",
+        "\n",
+        "# Rutas de S3\n",
+        "INPUT_PATH = f's3://{BUCKET}/{PREFIX}/raw/descriptions/'\n",
+        "OUTPUT_PATH = f's3://{BUCKET}/{PREFIX}/processed/text/'\n",
+        "MODEL_PATH = f's3://{BUCKET}/{PREFIX}/models/text/'"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 3. Carga y Preparación de Datos"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def load_data():\n",
+        "    try:\n",
+        "        # Crear job de Glue para cargar datos\n",
+        "        response = glue.start_job_run(\n",
+        "            JobName='load_transaction_descriptions',\n",
+        "            Arguments={\n",
+        "                '--input_path': INPUT_PATH,\n",
+        "                '--database': DATABASE,\n",
+        "                '--table': TABLE\n",
+        "            }\n",
+        "        )\n",
+        "        \n",
+        "        job_run_id = response['JobRunId']\n",
+        "        logger.info(f\"Job de Glue iniciado: {job_run_id}\")\n",
+        "        \n",
+        "        # Esperar a que termine el job\n",
+        "        glue.get_job_run(JobName='load_transaction_descriptions', RunId=job_run_id)\n",
+        "        \n",
+        "        return True\n",
+        "        \n",
+        "    except ClientError as e:\n",
+        "        logger.error(f\"Error al cargar datos: {str(e)}\")\n",
+        "        raise\n",
+        "\n",
+        "load_data()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 4. Análisis de Sentimiento con Amazon Comprehend"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def analyze_sentiment():\n",
+        "    try:\n",
+        "        # Iniciar job de análisis de sentimiento\n",
+        "        response = comprehend.start_sentiment_detection_job(\n",
+        "            InputDataConfig={\n",
+        "                'S3Uri': f'{INPUT_PATH}/descriptions.csv',\n",
+        "                'InputFormat': 'ONE_DOC_PER_LINE'\n",
+        "            },\n",
+        "            OutputDataConfig={\n",
+        "                'S3Uri': f'{OUTPUT_PATH}/sentiment/'\n",
+        "            },\n",
+        "            DataAccessRoleArn='tu-rol-arn',\n",
+        "            JobName=f'sentiment-analysis-{datetime.now().strftime(\"%Y%m%d-%H%M%S\")}',\n",
+        "            LanguageCode='en'\n",
+        "        )\n",
+        "        \n",
+        "        job_id = response['JobId']\n",
+        "        logger.info(f\"Job de análisis de sentimiento iniciado: {job_id}\")\n",
+        "        \n",
+        "        # Esperar a que termine el job\n",
+        "        while True:\n",
+        "            status = comprehend.describe_sentiment_detection_job(JobId=job_id)['SentimentDetectionJobProperties']['JobStatus']\n",
+        "            if status in ['COMPLETED', 'FAILED', 'STOPPED']:\n",
+        "                break\n",
+        "                \n",
+        "        return job_id\n",
+        "        \n",
+        "    except ClientError as e:\n",
+        "        logger.error(f\"Error en análisis de sentimiento: {str(e)}\")\n",
+        "        raise\n",
+        "\n",
+        "sentiment_job_id = analyze_sentiment()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 5. Detección de Entidades con Amazon Comprehend"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def detect_entities():\n",
+        "    try:\n",
+        "        # Iniciar job de detección de entidades\n",
+        "        response = comprehend.start_entities_detection_job(\n",
+        "            InputDataConfig={\n",
+        "                'S3Uri': f'{INPUT_PATH}/descriptions.csv',\n",
+        "                'InputFormat': 'ONE_DOC_PER_LINE'\n",
+        "            },\n",
+        "            OutputDataConfig={\n",
+        "                'S3Uri': f'{OUTPUT_PATH}/entities/'\n",
+        "            },\n",
+        "            DataAccessRoleArn='tu-rol-arn',\n",
+        "            JobName=f'entity-detection-{datetime.now().strftime(\"%Y%m%d-%H%M%S\")}',\n",
+        "            LanguageCode='en'\n",
+        "        )\n",
+        "        \n",
+        "        job_id = response['JobId']\n",
+        "        logger.info(f\"Job de detección de entidades iniciado: {job_id}\")\n",
+        "        \n",
+        "        # Esperar a que termine el job\n",
+        "        while True:\n",
+        "            status = comprehend.describe_entities_detection_job(JobId=job_id)['EntitiesDetectionJobProperties']['JobStatus']\n",
+        "            if status in ['COMPLETED', 'FAILED', 'STOPPED']:\n",
+        "                break\n",
+        "                \n",
+        "        return job_id\n",
+        "        \n",
+        "    except ClientError as e:\n",
+        "        logger.error(f\"Error en detección de entidades: {str(e)}\")\n",
+        "        raise\n",
+        "\n",
+        "entities_job_id = detect_entities()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 6. Análisis de Tópicos con Amazon Comprehend"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def analyze_topics():\n",
+        "    try:\n",
+        "        # Iniciar job de modelado de tópicos\n",
+        "        response = comprehend.start_topics_detection_job(\n",
+        "            InputDataConfig={\n",
+        "                'S3Uri': f'{INPUT_PATH}/descriptions.csv',\n",
+        "                'InputFormat': 'ONE_DOC_PER_LINE'\n",
+        "            },\n",
+        "            OutputDataConfig={\n",
+        "                'S3Uri': f'{OUTPUT_PATH}/topics/'\n",
+        "            },\n",
+        "            DataAccessRoleArn='tu-rol-arn',\n",
+        "            JobName=f'topic-modeling-{datetime.now().strftime(\"%Y%m%d-%H%M%S\")}',\n",
+        "            NumberOfTopics=10\n",
+        "        )\n",
+        "        \n",
+        "        job_id = response['JobId']\n",
+        "        logger.info(f\"Job de modelado de tópicos iniciado: {job_id}\")\n",
+        "        \n",
+        "        # Esperar a que termine el job\n",
+        "        while True:\n",
+        "            status = comprehend.describe_topics_detection_job(JobId=job_id)['TopicsDetectionJobProperties']['JobStatus']\n",
+        "            if status in ['COMPLETED', 'FAILED', 'STOPPED']:\n",
+        "                break\n",
+        "                \n",
+        "        return job_id\n",
+        "        \n",
+        "    except ClientError as e:\n",
+        "        logger.error(f\"Error en modelado de tópicos: {str(e)}\")\n",
+        "        raise\n",
+        "\n",
+        "topics_job_id = analyze_topics()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 7. Procesamiento de Resultados"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def process_results():\n",
+        "    try:\n",
+        "        # Crear job de Glue para procesar resultados\n",
+        "        response = glue.start_job_run(\n",
+        "            JobName='process_text_analysis',\n",
+        "            Arguments={\n",
+        "                '--sentiment_path': f'{OUTPUT_PATH}/sentiment/',\n",
+        "                '--entities_path': f'{OUTPUT_PATH}/entities/',\n",
+        "                '--topics_path': f'{OUTPUT_PATH}/topics/',\n",
+        "                '--output_path': f'{OUTPUT_PATH}/processed/',\n",
+        "                '--database': DATABASE,\n",
+        "                '--table': 'text_features'\n",
+        "            }\n",
+        "        )\n",
+        "        \n",
+        "        job_run_id = response['JobRunId']\n",
+        "        logger.info(f\"Job de procesamiento iniciado: {job_run_id}\")\n",
+        "        \n",
+        "        # Esperar a que termine el job\n",
+        "        glue.get_job_run(JobName='process_text_analysis', RunId=job_run_id)\n",
+        "        \n",
+        "        return True\n",
+        "        \n",
+        "    except ClientError as e:\n",
+        "        logger.error(f\"Error al procesar resultados: {str(e)}\")\n",
+        "        raise\n",
+        "\n",
+        "process_results()"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {},
+      "source": [
+        "## 8. Generación de Reporte"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "execution_count": null,
+      "metadata": {},
+      "outputs": [],
+      "source": [
+        "def generate_report():\n",
+        "    try:\n",
+        "        # Crear reporte de análisis\n",
+        "        report = {\n",
+        "            'analysis_date': datetime.now().isoformat(),\n",
+        "            'jobs': {\n",
+        "                'sentiment': sentiment_job_id,\n",
+        "                'entities': entities_job_id,\n",
+        "                'topics': topics_job_id\n",
+        "            },\n",
+        "            'output_locations': {\n",
+        "                'sentiment': f'{OUTPUT_PATH}/sentiment/',\n",
+        "                'entities': f'{OUTPUT_PATH}/entities/',\n",
+        "                'topics': f'{OUTPUT_PATH}/topics/',\n",
+        "                'processed': f'{OUTPUT_PATH}/processed/'\n",
+        "            }\n",
+        "        }\n",
+        "        \n",
+        "        # Guardar reporte en S3\n",
+        "        s3.put_object(\n",
+        "            Bucket=BUCKET,\n",
+        "            Key=f'{PREFIX}/reports/text_analysis_report.json',\n",
+        "            Body=json.dumps(report, indent=2)\n",
+        "        )\n",
+        "        \n",
+        "        logger.info(\"Reporte generado exitosamente\")\n",
+        "        return report\n",
+        "        \n",
+        "    except ClientError as e:\n",
+        "        logger.error(f\"Error al generar reporte: {str(e)}\")\n",
+        "        raise\n",
+        "\n",
+        "report = generate_report()"
+      ]
+    }
+  ],
+  "metadata": {
+    "kernelspec": {
+      "display_name": "Python 3",
+      "language": "python",
+      "name": "python3"
+    },
+    "language_info": {
+      "codemirror_mode": {
+        "name": "ipython",
+        "version": 3
+      },
+      "file_extension": ".py",
+      "mimetype": "text/x-python",
+      "name": "python",
+      "nbconvert_exporter": "python",
+      "pygments_lexer": "ipython3",
+      "version": "3.8.0"
+    }
+  },
+  "nbformat": 4,
+  "nbformat_minor": 4
+} 
